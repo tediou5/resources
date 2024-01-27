@@ -261,7 +261,7 @@ impl DeriveResource {
                     &self,
                     id: &Option<Self::ResourceID>,
                     exector: E,
-                ) -> Result<()>
+                ) -> Result<(), crate::Error>
                 where
                     E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -279,7 +279,7 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<()>
+                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), crate::Error>
                 where
                     E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -297,7 +297,7 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<()>
+                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
                 where
                 E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -311,7 +311,7 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<()>
+                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
                 where
                 E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -330,7 +330,7 @@ impl DeriveResource {
             #[automatically_derived]
             impl #ty_generics Resource<Sqlite> for #struct_ident #ty_generics #where_clause {
                 type ResourceID = #ids_typ;
-                async fn insert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<()>
+                async fn insert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), crate::Error>
                 where
                 E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -348,7 +348,7 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<()>
+                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), crate::Error>
                 where
                 E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -366,7 +366,7 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<()>
+                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
                 where
                 E: sqlx::Executor<'c, Database = Any>,
                 {
@@ -380,7 +380,7 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<()>
+                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
                 where
                 E: sqlx::Executor<'c, Database = Any>,
                 {

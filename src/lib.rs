@@ -58,7 +58,7 @@
 // impl Resources for TestResources<'_> {}
 //
 // impl Action for TestResources<'_> {
-//     async fn execute<'c, E>(&self, executor: E) -> Result<()>
+//     async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
 //     where
 //         E: SqlxExecutor<'c, Database = Any>,
 //     {
@@ -70,20 +70,21 @@
 //     }
 // }
 #![feature(async_closure, associated_type_bounds, let_chains)]
-#![allow(unused)]
+#![allow(unused, async_fn_in_trait)]
 pub use resource_macros;
 
-use std::marker::PhantomData;
+mod error;
+pub use error::Error;
 
-use anyhow::{Ok, Result};
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 
 use sqlx::{database::Database as SqlxDatabase, Any, Executor as SqlxExecutor, Postgres, Sqlite};
 
 pub trait Resources: Action {}
 
 pub trait Action: Serialize {
-    async fn execute<'c, E>(&self, executor: E) -> Result<()>
+    async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>;
 }
@@ -91,25 +92,33 @@ pub trait Action: Serialize {
 pub trait GenResourceID {
     type Target;
 
-    async fn gen_id() -> Result<Self::Target>;
+    async fn gen_id() -> Result<Self::Target, crate::Error>;
 }
 
 pub trait Resource<DB: SqlxDatabase>: GenResourceID<Target = Self::ResourceID> + Serialize {
     type ResourceID: Serialize;
 
-    async fn insert<'c, E>(&self, id: &Option<Self::ResourceID>, executor: E) -> Result<()>
+    async fn insert<'c, E>(
+        &self,
+        id: &Option<Self::ResourceID>,
+        executor: E,
+    ) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>;
 
-    async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, executor: E) -> Result<()>
+    async fn upsert<'c, E>(
+        &self,
+        id: &Option<Self::ResourceID>,
+        executor: E,
+    ) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>;
 
-    async fn update<'c, E>(&self, id: &Self::ResourceID, executor: E) -> Result<()>
+    async fn update<'c, E>(&self, id: &Self::ResourceID, executor: E) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>;
 
-    async fn drop<'c, E>(id: &Self::ResourceID, executor: E) -> Result<()>
+    async fn drop<'c, E>(id: &Self::ResourceID, executor: E) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>;
 }
@@ -132,7 +141,7 @@ pub enum GeneralAction<DB: SqlxDatabase, R: Resource<DB>> {
 }
 
 impl<DB: SqlxDatabase, R: Resource<DB>> Action for GeneralAction<DB, R> {
-    async fn execute<'c, E>(&self, executor: E) -> Result<()>
+    async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>,
     {
@@ -168,7 +177,7 @@ impl<A> Action for Command<A>
 where
     A: Action,
 {
-    async fn execute<'c, E>(&self, executor: E) -> Result<()>
+    async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
     where
         E: SqlxExecutor<'c, Database = Any>,
     {
@@ -188,15 +197,16 @@ where
     RS: Resources,
 {
     #[allow(dead_code)]
-    pub async fn execute<'e, 'c: 'e>(&self, pool: &'c sqlx::Pool<sqlx::Any>) -> Result<()> {
+    pub async fn execute<'c>(&self, pool: &'c sqlx::Pool<sqlx::Any>) -> Result<(), crate::Error> {
         match self {
             Commands::Single(cmd) => {
                 cmd.execute(pool).await?;
             }
             Commands::Multi(cmds) => {
                 let mut tx = pool.begin().await?;
+                let exec = tx.as_mut();
                 for cmd in cmds {
-                    cmd.execute(&mut tx).await?;
+                    cmd.execute(&mut *exec).await?;
                 }
                 tx.commit().await?;
             }
@@ -208,8 +218,8 @@ where
 #[cfg(test)]
 mod test {
     use super::{
-        Any, Command, Deserialize, GenResourceID, GeneralAction, Postgres, Resource, Result,
-        Serialize, Sqlite, SqlxDatabase, SqlxExecutor,
+        Any, Command, Deserialize, GenResourceID, GeneralAction, Postgres, Resource, Serialize,
+        Sqlite, SqlxDatabase, SqlxExecutor,
     };
 
     #[derive(Deserialize, Serialize, Debug)]
@@ -256,7 +266,7 @@ mod test {
     impl GenResourceID for Message<'_> {
         type Target = i64;
 
-        async fn gen_id() -> Result<i64> {
+        async fn gen_id() -> Result<i64, crate::Error> {
             todo!()
         }
     }
