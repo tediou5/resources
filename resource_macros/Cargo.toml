@@ -1,0 +1,20 @@
+[package]
+name = "resource_macros"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "resource_macros"
+path = "src/lib.rs"
+proc-macro = true
+
+
+[dependencies]
+bae = { version = "0.1", default-features = false }
+syn = { version = "1", default-features = false }
+quote = { version = "1", default-features = false }
+heck = { version = "0.4", default-features = false }
+proc-macro2 = { version = "1", default-features = false }
+sqlx = { version = "0.6.2", features = ["json", "runtime-tokio-rustls", "postgres", "sqlite"] }
