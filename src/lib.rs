@@ -86,7 +86,7 @@ pub trait Resources: Action {}
 pub trait Action: Serialize {
     async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>;
+        E: SqlxExecutor<'c, Database = Sqlite>;
 }
 
 pub trait GenResourceID {
@@ -104,7 +104,7 @@ pub trait Resource<DB: SqlxDatabase>: GenResourceID<Target = Self::ResourceID> +
         executor: E,
     ) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>;
+        E: SqlxExecutor<'c, Database = DB>;
 
     async fn upsert<'c, E>(
         &self,
@@ -112,19 +112,19 @@ pub trait Resource<DB: SqlxDatabase>: GenResourceID<Target = Self::ResourceID> +
         executor: E,
     ) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>;
+        E: SqlxExecutor<'c, Database = DB>;
 
     async fn update<'c, E>(&self, id: &Self::ResourceID, executor: E) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>;
+        E: SqlxExecutor<'c, Database = DB>;
 
     async fn drop<'c, E>(id: &Self::ResourceID, executor: E) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>;
+        E: SqlxExecutor<'c, Database = DB>;
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
-pub enum GeneralAction<DB: SqlxDatabase, R: Resource<DB>> {
+pub enum GeneralAction<R: Resource<Sqlite>> {
     Insert {
         id: Option<R::ResourceID>,
         resource: R,
@@ -140,10 +140,10 @@ pub enum GeneralAction<DB: SqlxDatabase, R: Resource<DB>> {
     Drop(R::ResourceID),
 }
 
-impl<DB: SqlxDatabase, R: Resource<DB>> Action for GeneralAction<DB, R> {
+impl<R: Resource<Sqlite>> Action for GeneralAction<R> {
     async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>,
+        E: SqlxExecutor<'c, Database = Sqlite>,
     {
         match self {
             GeneralAction::Insert { id, resource } => resource.insert(id, executor).await,
@@ -179,7 +179,7 @@ where
 {
     async fn execute<'c, E>(&self, executor: E) -> Result<(), crate::Error>
     where
-        E: SqlxExecutor<'c, Database = Any>,
+        E: SqlxExecutor<'c, Database = Sqlite>,
     {
         self.action.execute(executor).await
     }
@@ -197,7 +197,10 @@ where
     RS: Resources,
 {
     #[allow(dead_code)]
-    pub async fn execute<'c>(&self, pool: &'c sqlx::Pool<sqlx::Any>) -> Result<(), crate::Error> {
+    pub async fn execute<'c>(
+        &self,
+        pool: &'c sqlx::Pool<sqlx::Sqlite>,
+    ) -> Result<(), crate::Error> {
         match self {
             Commands::Single(cmd) => {
                 cmd.execute(pool).await?;
@@ -225,13 +228,13 @@ mod test {
     #[derive(Deserialize, Serialize, Debug)]
     enum Server<'a> {
         #[serde(borrow)]
-        Message(Command<GeneralAction<Postgres, Message<'a>>>),
+        Message(Command<GeneralAction<Message<'a>>>),
     }
 
     #[derive(Deserialize, Serialize, Debug)]
     enum Client<'a> {
         #[serde(borrow)]
-        Message(Command<GeneralAction<Sqlite, Message<'a>>>),
+        Message(Command<GeneralAction<Message<'a>>>),
     }
 
     #[derive(Deserialize, Serialize, PartialEq, Debug, resource_macros::Resource)]
@@ -241,6 +244,7 @@ mod test {
         sqlite_table_name = "message",
         primary_key = "id:i64",
         constraint = "slep_message_pkey"
+        error = "crate"
     )]
     pub struct Message<'m> {
         #[serde(borrow)]

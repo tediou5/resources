@@ -36,6 +36,7 @@ struct DeriveResource {
     primary_keys: Vec<(syn::Ident, syn::Ident)>,
     constraint: String,
     fields: Vec<Field>,
+    error: syn::Ident,
 }
 
 impl DeriveResource {
@@ -47,6 +48,7 @@ impl DeriveResource {
             constraint,
             primary_key,
             table_iden: _,
+            error,
         } = attributes::derive_attr::Resource::from_attributes(&input.attrs)?;
         let struct_ident = input.ident;
         let struct_generics = input.generics;
@@ -54,6 +56,10 @@ impl DeriveResource {
         let schema_name = schema_name
             .and_then(|s| parse_lit_string(&s).ok())
             .map(|s| format_ident!("{s}"));
+        let error = error
+            .and_then(|s| parse_lit_string(&s).ok())
+            .map(|s| format_ident!("{s}"))
+            .unwrap_or(format_ident!("resource"));
         let pg_table_name = parse_lit_string(&pg_table_name)?.to_string();
         let sqlite_table_name = parse_lit_string(&sqlite_table_name)?.to_string();
         let constraint = parse_lit_string(&(constraint))?.to_string();
@@ -68,24 +74,37 @@ impl DeriveResource {
             .collect();
 
         let fields: Vec<Field> = if let syn::Data::Struct(item_struct) = input.data
-        && let syn::Fields::Named(fields) = item_struct.fields {
-            fields.named.iter().filter_map(|field| {
-                let ident = field.ident.as_ref()?;
-                let field_attr =  attributes::field_attr::Resource::try_from_attributes(&field.attrs).ok()?;
-                let (name, typ) =
-                if let Some(attr) = field_attr
-                && let Some(name) = attr.name {
-                    let name = parse_lit_string(&name).unwrap().to_string();
-                    let typ = attr.typ.and_then(|t| parse_lit_string(&t).ok()).map(|t| t.to_string());
-                    (name, typ)
-                } else {
-                    let original_field_name = trim_starting_raw_identifier(ident);
-                    use heck::ToSnakeCase as _;
-                    let name = original_field_name.as_str().to_snake_case();
-                    (name, None)
-                };
-                Some(Field { name, typ, ident: ident.clone() })
-            }).collect()
+            && let syn::Fields::Named(fields) = item_struct.fields
+        {
+            fields
+                .named
+                .iter()
+                .filter_map(|field| {
+                    let ident = field.ident.as_ref()?;
+                    let field_attr =
+                        attributes::field_attr::Resource::try_from_attributes(&field.attrs).ok()?;
+                    let (name, typ) = if let Some(attr) = field_attr
+                        && let Some(name) = attr.name
+                    {
+                        let name = parse_lit_string(&name).unwrap().to_string();
+                        let typ = attr
+                            .typ
+                            .and_then(|t| parse_lit_string(&t).ok())
+                            .map(|t| t.to_string());
+                        (name, typ)
+                    } else {
+                        let original_field_name = trim_starting_raw_identifier(ident);
+                        use heck::ToSnakeCase as _;
+                        let name = original_field_name.as_str().to_snake_case();
+                        (name, None)
+                    };
+                    Some(Field {
+                        name,
+                        typ,
+                        ident: ident.clone(),
+                    })
+                })
+                .collect()
         } else {
             vec![]
         };
@@ -99,6 +118,7 @@ impl DeriveResource {
             primary_keys,
             constraint,
             fields,
+            error,
         })
     }
 
@@ -112,6 +132,7 @@ impl DeriveResource {
             primary_keys,
             constraint,
             fields,
+            error: _,
         } = self;
 
         let mut pk_fields: Vec<Field> = primary_keys
@@ -211,11 +232,12 @@ impl DeriveResource {
             primary_keys,
             constraint: _,
             fields,
+            error,
         } = self;
 
         let (_, ty_generics, where_clause) = struct_generics.split_for_impl();
 
-        let (pg_insert, sqlite_insert, pg_upsert, sqlite_upsert, pg_delete, sqlite_delete) =
+        let (_pg_insert, sqlite_insert, _pg_upsert, sqlite_upsert, _pg_delete, sqlite_delete) =
             self.gen_upsert();
 
         let mut primary_keys_c = primary_keys.clone();
@@ -253,86 +275,87 @@ impl DeriveResource {
             }
         };
 
-        let impl_pg_res = quote! {
-            #[automatically_derived]
-            impl #ty_generics Resource<Postgres> for #struct_ident #ty_generics #where_clause {
-                type ResourceID = #ids_typ;
-                async fn insert<'c, E>(
-                    &self,
-                    id: &Option<Self::ResourceID>,
-                    exector: E,
-                ) -> Result<(), crate::Error>
-                where
-                    E: sqlx::Executor<'c, Database = Any>,
-                {
-                    let #ids = if let Some(#ids) = id.clone() {
-                        #ids
-                    } else {
-                        <Self as GenResourceID>::gen_id().await?
-                    };
+        {
+            // let impl_pg_res = quote! {
+            //         #[automatically_derived]
+            //         impl #ty_generics Resource<Postgres> for #struct_ident #ty_generics #where_clause {
+            //             type ResourceID = #ids_typ;
+            //             async fn insert<'c, E>(
+            //                 &self,
+            //                 id: &Option<Self::ResourceID>,
+            //                 exector: E,
+            //             ) -> Result<(), #error::Error>
+            //             where
+            //                 E: sqlx::Executor<'c, Database = Any>,
+            //             {
+            //                 let #ids = if let Some(#ids) = id.clone() {
+            //                     #ids
+            //                 } else {
+            //                     <Self as GenResourceID>::gen_id().await?
+            //                 };
 
-                    sqlx::query(#pg_insert)
-                    #bind_pks
-                    #bind_fields
-                    .execute(exector)
-                    .await?;
-                Ok(())
-                }
+            //                 sqlx::query(#pg_insert)
+            //                 #bind_pks
+            //                 #bind_fields
+            //                 .execute(exector)
+            //                 .await?;
+            //             Ok(())
+            //             }
 
-                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), crate::Error>
-                where
-                    E: sqlx::Executor<'c, Database = Any>,
-                {
-                    let #ids = if let Some(#ids) = id.clone() {
-                        #ids
-                    } else {
-                        <Self as GenResourceID>::gen_id().await?
-                    };
+            //             async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), #error::Error>
+            //             where
+            //                 E: sqlx::Executor<'c, Database = Any>,
+            //             {
+            //                 let #ids = if let Some(#ids) = id.clone() {
+            //                     #ids
+            //                 } else {
+            //                     <Self as GenResourceID>::gen_id().await?
+            //                 };
 
-                    sqlx::query(#pg_upsert)
-                    #bind_pks
-                    #bind_fields
-                    .execute(exector)
-                    .await?;
-                Ok(())
-                }
+            //                 sqlx::query(#pg_upsert)
+            //                 #bind_pks
+            //                 #bind_fields
+            //                 .execute(exector)
+            //                 .await?;
+            //             Ok(())
+            //             }
 
-                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
-                where
-                E: sqlx::Executor<'c, Database = Any>,
-                {
-                    let #ids = id.clone();
+            //             async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<(), #error::Error>
+            //             where
+            //             E: sqlx::Executor<'c, Database = Any>,
+            //             {
+            //                 let #ids = id.clone();
 
-                    sqlx::query(#pg_upsert)
-                    #bind_pks
-                    #bind_fields
-                    .execute(exector)
-                    .await?;
-                Ok(())
-                }
+            //                 sqlx::query(#pg_upsert)
+            //                 #bind_pks
+            //                 #bind_fields
+            //                 .execute(exector)
+            //                 .await?;
+            //             Ok(())
+            //             }
 
-                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
-                where
-                E: sqlx::Executor<'c, Database = Any>,
-                {
-                    let #ids = id.clone();
+            //             async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<(), #error::Error>
+            //             where
+            //             E: sqlx::Executor<'c, Database = Any>,
+            //             {
+            //                 let #ids = id.clone();
 
-                    sqlx::query(#pg_delete)
-                    #bind_pks
-                    .execute(exector)
-                    .await?;
-                Ok(())
-                }
-            }
-        };
-
+            //                 sqlx::query(#pg_delete)
+            //                 #bind_pks
+            //                 .execute(exector)
+            //                 .await?;
+            //             Ok(())
+            //             }
+            //         }
+            //     };
+        }
         let impl_sqlite_res = quote! {
             #[automatically_derived]
             impl #ty_generics Resource<Sqlite> for #struct_ident #ty_generics #where_clause {
                 type ResourceID = #ids_typ;
-                async fn insert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), crate::Error>
+                async fn insert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), #error::Error>
                 where
-                E: sqlx::Executor<'c, Database = Any>,
+                E: sqlx::Executor<'c, Database = Sqlite>,
                 {
                     let #ids = if let Some(#ids) = id.clone() {
                         #ids
@@ -348,9 +371,9 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), crate::Error>
+                async fn upsert<'c, E>(&self, id: &Option<Self::ResourceID>, exector: E) -> Result<(), #error::Error>
                 where
-                E: sqlx::Executor<'c, Database = Any>,
+                E: sqlx::Executor<'c, Database = Sqlite>,
                 {
                     let #ids = if let Some(#ids) = id.clone() {
                         #ids
@@ -366,9 +389,9 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
+                async fn update<'c, E>(&self, id: &Self::ResourceID, exector: E) -> Result<(), #error::Error>
                 where
-                E: sqlx::Executor<'c, Database = Any>,
+                E: sqlx::Executor<'c, Database = Sqlite>,
                 {
                     let #ids = id.clone();
 
@@ -380,9 +403,9 @@ impl DeriveResource {
                 Ok(())
                 }
 
-                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<(), crate::Error>
+                async fn drop<'c, E>(id: &Self::ResourceID, exector: E) -> Result<(), #error::Error>
                 where
-                E: sqlx::Executor<'c, Database = Any>,
+                E: sqlx::Executor<'c, Database = Sqlite>,
                 {
                     let #ids = id.clone();
 
@@ -395,7 +418,8 @@ impl DeriveResource {
             }
         };
 
-        proc_macro2::TokenStream::from_iter([impl_pg_res, impl_sqlite_res])
+        proc_macro2::TokenStream::from_iter([impl_sqlite_res])
+        // proc_macro2::TokenStream::from_iter([impl_pg_res, impl_sqlite_res])
         // impl_pg_res
     }
 }

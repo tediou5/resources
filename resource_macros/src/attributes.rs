@@ -9,6 +9,7 @@ pub mod derive_attr {
         pub constraint: syn::Lit,
         pub primary_key: syn::Lit,
         pub table_iden: Option<()>,
+        pub error: Option<syn::Lit>,
     }
 }
 
